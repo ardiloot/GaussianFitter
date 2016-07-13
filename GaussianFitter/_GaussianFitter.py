@@ -18,6 +18,21 @@ def Gaussian2D(xs, ys, amp, x0, y0, sigmaX, sigmaY, offset, phi = 0.0):
         res = res.reshape(originalShape)
     return res
 
+def Gaussian2DSym(xs, ys, amp, x0, y0, sigma, offset):
+        # Flatten arrays
+    originalShape = None
+    if len(xs.shape) != 1:
+        originalShape = xs.shape
+        xs = xs.ravel()
+        ys = ys.ravel()
+        
+    res = _Fitter.gaussian2d_sym(xs, ys, amp, x0, y0, sigma, offset)
+    
+    # Restore shape
+    if originalShape is not None:
+        res = res.reshape(originalShape)
+    return res
+
 def Fit2dGaussSigma(xs, ys, values, initial, phi = 0.0, \
                     ftol = 1.49012e-8, xtol = 1.49012e-8, gtol = 0.0, \
                     maxfev = 0, factor = 100):
@@ -32,12 +47,46 @@ def Fit2dGaussSigma(xs, ys, values, initial, phi = 0.0, \
     # Init parameters
     n = len(initial)
     if maxfev == 0:
-        maxfev = 100 * (n + 1)
+        maxfev = 200 * (n + 1)
     
     # Do fitting
     cosPhi, sinPhi = math.cos(phi), math.sin(phi)
     fitRes = _Fitter.fit_gaussian_sigma(xs, ys, values, initial, cosPhi, \
                                         sinPhi, ftol, xtol, gtol, maxfev, factor)
+    
+    # Process result
+    solution, residual, info, nfev, fjac, ipvt, qtf = fitRes  # @UnusedVariable
+    shapeFjac = fjac.shape
+    fjac = fjac.ravel(order = "F").reshape(shapeFjac[::-1])
+    
+    # Calculate pcov
+    pcov = _CalcPcov(initial, info, fjac, ipvt, residual, values, n)
+    
+    # Restore shape
+    if originalShape is not None:
+        residual = residual.reshape(originalShape)
+    
+    return solution, pcov, residual
+
+def Fit2dGaussSigmaSym(xs, ys, values, initial, \
+                    ftol = 1.49012e-8, xtol = 1.49012e-8, gtol = 0.0, \
+                    maxfev = 0, factor = 100):
+    # Flatten arrays
+    originalShape = None
+    if len(xs.shape) != 1:
+        originalShape = xs.shape
+        xs = xs.ravel()
+        ys = ys.ravel()
+        values = values.ravel()
+        
+    # Init parameters
+    n = len(initial)
+    if maxfev == 0:
+        maxfev = 200 * (n + 1)
+    
+    # Do fitting
+    fitRes = _Fitter.fit_gaussian_sigma_sym(xs, ys, values, initial, \
+                                            ftol, xtol, gtol, maxfev, factor)
     
     # Process result
     solution, residual, info, nfev, fjac, ipvt, qtf = fitRes  # @UnusedVariable
@@ -67,7 +116,7 @@ def Fit2dGaussZ(xs, ys, values, initial, tckSigmaX, tckSigmaY, phi = 0.0, \
     # Init parameters
     n = len(initial)
     if maxfev == 0:
-        maxfev = 100 * (n + 1)
+        maxfev = 200 * (n + 1)
     
     # Do fitting
     cosPhi, sinPhi = math.cos(phi), math.sin(phi)
@@ -92,8 +141,45 @@ def Fit2dGaussZ(xs, ys, values, initial, tckSigmaX, tckSigmaY, phi = 0.0, \
     
     return solution, pcov, residual
 
+def Fit2dGaussZSym(xs, ys, values, initial, tckSigma, \
+                    ftol = 1.49012e-8, xtol = 1.49012e-8, gtol = 0.0, \
+                    maxfev = 0, factor = 100):
+    # Flatten arrays
+    originalShape = None
+    if len(xs.shape) != 1:
+        originalShape = xs.shape
+        xs = xs.ravel()
+        ys = ys.ravel()
+        values = values.ravel()
+        
+    # Init parameters
+    n = len(initial)
+    if maxfev == 0:
+        maxfev = 200 * (n + 1)
+    
+    # Do fitting
+    tSigma, cSigma, kSigma = tckSigma
+    fitRes = _Fitter.fit_gaussian_z_sym(xs, ys, values, initial, \
+                                    tSigma, cSigma, kSigma, 0, \
+                                    ftol, xtol, gtol, maxfev, factor)
+    
+    # Process result
+    solution, residual, info, nfev, fjac, ipvt, qtf = fitRes  # @UnusedVariable
+    shapeFjac = fjac.shape
+    fjac = fjac.ravel(order = "F").reshape(shapeFjac[::-1])
+    
+    # Calculate pcov
+    pcov = _CalcPcov(initial, info, fjac, ipvt, residual, values, n)
+    
+    # Restore shape
+    if originalShape is not None:
+        residual = residual.reshape(originalShape)
+    
+    return solution, pcov, residual
+
 def _CalcPcov(initial, info, fjac, ipvt, fvec, values, n):
-    pcov = None
+    pcov = np.zeros((len(initial), len(initial)), dtype = float)
+    pcov.fill(np.inf)
     if info in [1, 2, 3, 4]:
         perm = np.take(np.eye(n), ipvt - 1, 0)
         r = np.triu(np.transpose(fjac)[:n, :])
@@ -116,6 +202,8 @@ if __name__ == "__main__":
     from scipy import interpolate
     import pylab as plt
     
+    
+    
     np.random.seed(0)
     
     # Generate test z-dependence
@@ -135,6 +223,7 @@ if __name__ == "__main__":
     amp, x0, y0, sigmaX, sigmaY, offset = 1.0, 0.0, 0.0, 150e-9, 250e-9, 0.0
     noise = 0.05 * np.random.uniform(size = xM.shape)
     gauss = Gaussian2D(xM, yM, amp, x0, y0, sigmaX, sigmaY, offset) + noise
+    gaussSym = Gaussian2DSym(xM, yM, amp, x0, y0, sigmaX, offset) #+ noise
     
     # Fitting      
     initial = [1.1, 3e-9, 3e-9, 0.0, 0.0]
@@ -153,6 +242,6 @@ if __name__ == "__main__":
     plt.plot(1e6 * zs, 1e9 * sigmaYs)
         
     plt.figure()
-    plt.pcolormesh(xs, ys, gauss)
+    plt.pcolormesh(1e9 * xs, 1e9 * ys, gaussSym)
         
     plt.show()
